@@ -1,0 +1,38 @@
+{
+  "name": "topshot-inventory",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "seed": "node scripts/seed.js",
+    "seed:orders": "node scripts/seed_historical_orders.js"
+  },
+  "dependencies": {
+    "clsx": "^2.0.0",
+    "html5-qrcode": "^2.3.8",
+    "jsbarcode": "^3.11.6",
+    "jspdf": "^2.5.1",
+    "lucide-react": "^0.284.0",
+    "mongoose": "^7.6.3",
+    "next": "13.4.19",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwind-merge": "^1.14.0",
+    "uuid": "^9.0.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/jsbarcode": "^3.11.4",
+    "@types/node": "^18.18.0",
+    "@types/react": "^18.2.25",
+    "@types/react-dom": "^18.2.10",
+    "@types/uuid": "^9.0.5",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "tailwindcss": "^3.3.3",
+    "typescript": "^5.2.2"
+  }
+}

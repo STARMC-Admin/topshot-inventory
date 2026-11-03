@@ -1,0 +1,312 @@
+================================================================================
+          TOPSHOT PICKLEBALL INVENTORY - WORKER UI TEST PLAYBOOK
+================================================================================
+Application URL: http://localhost:3000
+CEO / Admin Override PIN: 9876
+
+This document contains step-by-step test cases and copy-pasteable test data
+specifically curated for testing worker functionality:
+  1. Worker: Scan & Dispatch (Barcode validation, Delhivery integration, PIN override, 1:1 mapping)
+  2. Worker: Process Return (Order return, barcode decommissioning, re-labeling & restock)
+
+================================================================================
+TEST SUITE 1: WORKER SCAN & DISPATCH (Tab: "Worker: Scan & Dispatch")
+================================================================================
+
+--- TEST CASE 1.1: Standard Dispatch (Happy Path, Discount <= 20%) ---
+Goal: Dispatch a physical racket with a standard discount without requiring admin PIN.
+Steps:
+  1. Open http://localhost:3000 and select tab: "Worker: Scan & Dispatch"
+  2. In "Step 1: Physical Barcode", paste the barcode:
+       TS-AERO-01-MV6ZH6A0-2PS6
+  3. Verify that the Racket Details card appears (SKU: Topshot Aero Carbon 16mm Pro, Cost: ₹4,499, Status: In-Stock).
+  4. In "Step 2: Delhivery Order Details", paste an unused tracking waybill:
+       DLHV-TEST-1001
+  5. Click "Verify Delhivery". Confirm buyer details load (Aarav Sharma / Mumbai).
+  6. In "Step 3: Pricing & Approvals", leave Discount % at:
+       10
+  7. Notice that NO Admin PIN field is required because discount (10%) <= 20%.
+  8. Click "Confirm & Dispatch Order".
+Expected Result:
+  - Green Success alert appears: "Order Dispatched Successfully!"
+  - Generates unique Order ID (e.g., ORD-2026-...)
+  - Barcode TS-AERO-01-MV6ZH6A0-2PS6 is atomically marked "Sold" in inventory.
+  - Form resets and is ready for the next racket.
+
+
+--- TEST CASE 1.2: High Discount > 20% (CEO PIN Approval Required) ---
+Goal: Enforce security rule where discounts exceeding 20% strictly require CEO PIN.
+Steps:
+  1. In "Step 1: Physical Barcode", paste barcode:
+       TS-ORCE-02-MV6ZH6AG-OFUA
+  2. Verify Racket Details card loads (SKU: Topshot Force Raw T700, Cost: ₹5,999).
+  3. In "Step 2: Delhivery Order Details", paste:
+       DLHV-TEST-1002
+  4. Click "Verify Delhivery".
+  5. In "Step 3: Pricing & Approvals", enter Discount %:
+       25
+  6. Notice the warning badge appears: "Approval Required: Discounts > 20% require Admin PIN".
+  7. ATTEMPT A: Leave the CEO / Admin PIN blank (or enter wrong PIN: 1234) and click "Confirm & Dispatch Order".
+     -> Result: Red alert: "DISCOUNT_APPROVAL_REQUIRED: Applied discount of 25% exceeds standard threshold (20%)."
+  8. ATTEMPT B: Enter the correct CEO Admin PIN:
+       9876
+  9. Click "Confirm & Dispatch Order".
+Expected Result:
+  - Order dispatches successfully with "admin_override: true" flagged in database!
+  - Green success receipt displays final discounted price: ₹4,499.
+
+
+--- TEST CASE 1.3: Duplicate Racket Dispatch Prevention (Strict 1:1 Mapping) ---
+Goal: Verify system rejects dispatching a racket that has already been dispatched.
+Steps:
+  1. In "Step 1: Physical Barcode", paste an ALREADY SOLD barcode:
+       TS-ORCE-02-SEED-001
+  2. Paste tracking ID:
+       DLHV-TEST-1003
+  3. Click "Confirm & Dispatch Order".
+Expected Result:
+  - Rejection with 409 Conflict:
+    "CONFLICT: This racket has already been sold on Order #ORD-2026-1001-RIIA. Strict 1:1 mapping forbids duplicate dispatches."
+
+
+--- TEST CASE 1.4: Duplicate Delhivery Waybill Prevention ---
+Goal: Verify system rejects reusing an existing Delhivery tracking number.
+Steps:
+  1. In "Step 1: Physical Barcode", paste an IN-STOCK barcode:
+       TS-SPIN-03-MV6ZH6AK-IYLB
+  2. In "Step 2: Delhivery Order Details", paste an ALREADY MAPPED tracking ID:
+       DLHV-BOM-901-7000
+  3. Click "Confirm & Dispatch Order".
+Expected Result:
+  - Rejection with 409 Conflict:
+    "CONFLICT: Delhivery tracking number 'DLHV-BOM-901-7000' is already mapped to existing Order #ORD-2026-1001-RIIA."
+
+
+--- TEST CASE 1.5: Invalid Barcode Handling ---
+Goal: Verify error handling when scanning an uncatalogued barcode.
+Steps:
+  1. Enter barcode:
+       TS-UNKNOWN-INVALID-999
+Expected Result:
+  - Red error message: "Item with barcode 'TS-UNKNOWN-INVALID-999' does not exist in inventory."
+
+
+================================================================================
+TEST SUITE 2: WORKER PROCESS RETURN (Tab: "Worker: Process Return")
+================================================================================
+
+--- TEST CASE 2.1: Customer Return & Automatic Re-Labeling (Happy Path) ---
+Goal: Return a customer order, decommission the damaged sticker, and generate
+      a brand new barcode + thermal label for restocking.
+Steps:
+  1. Open http://localhost:3000 and select tab: "Worker: Process Return"
+  2. In "Returned Package Identifier", paste either the Order ID or Delhivery ID:
+       ORD-2026-1002-LSAO
+     (Alternatively, enter the Delhivery Tracking ID: DLHV-PNQ-902-7001)
+  3. Click "Find & Process".
+Expected Result:
+  - Green confirmation banner: "Return Successfully Processed"
+  - Original Order Decommissioned box shows:
+      • Order ID: ORD-2026-1002-LSAO
+      • Customer: Tanvi Kulkarni
+      • Decommissioned Barcode: TS-AERO-01-SEED-002 (shown with strike-through)
+  - "Brand New Barcode Generated" card displays:
+      • Fresh unique barcode (e.g. TS-AERO-01-...)
+      • Stock status: In-Stock (+1)
+  - Click button "Print New Barcode Label (PDF)":
+      • Downloads printable thermal PDF label: Topshot_New_Label_TS-AERO-01-...pdf
+
+
+--- TEST CASE 2.2: Idempotency & Double Return Prevention ---
+Goal: Verify an order cannot be processed as returned multiple times.
+Steps:
+  1. In "Returned Package Identifier", paste an ALREADY RETURNED order ID:
+       ORD-2026-1008-XE0S
+     (Or its Delhivery Tracking ID: DLHV-IXC-908-7007)
+  2. Click "Find & Process".
+Expected Result:
+  - Red error banner: "Order #ORD-2026-1008-XE0S has ALREADY been processed as returned."
+
+
+--- TEST CASE 2.3: Non-Existent Return Identifier ---
+Goal: Verify system behavior when given an invalid tracking or order slip.
+Steps:
+  1. Paste identifier:
+       ORD-FAKE-999999
+  2. Click "Find & Process".
+Expected Result:
+  - Red error banner: "No existing order found matching identifier 'ORD-FAKE-999999'."
+
+
+================================================================================
+TEST DATA CHEAT SHEET (COPY-PASTE READY)
+================================================================================
+
+--- A. IN-STOCK PHYSICAL BARCODES (Ready for Dispatch Testing) ---
+
+[SKU: Topshot Aero Carbon 16mm Pro Racket - ₹4,499]
+  • TS-AERO-01-MV6ZH6A0-0OYG
+  • TS-AERO-01-MV6ZH6A0-6N8R
+  • TS-AERO-01-MV6ZH6A0-EQUL
+  • TS-AERO-01-MV6ZH6A0-TPMO
+  • TS-AERO-01-MV6ZH6A0-U1VZ
+  • TS-AERO-01-MV6ZH6A0-N6LQ
+  • TS-AERO-01-MV6ZH6A0-C61Z
+
+[SKU: Topshot Force Raw T700 Power Racket - ₹5,999]
+  • TS-ORCE-02-MV6ZH6AG-PZNC
+  • TS-ORCE-02-MV6ZH6AG-SBR9
+  • TS-ORCE-02-MV6ZH6AG-OY3N
+  • TS-ORCE-02-MV6ZH6AG-G47F
+  • TS-ORCE-02-MV6ZH6AH-8U69
+  • TS-ORCE-02-MV6ZH6AH-NGPQ
+  • TS-ORCE-02-MV6ZH6AH-KZE5
+
+[SKU: Topshot SpinMaster Pro Graphite Racket - ₹3,299]
+  • TS-SPIN-03-MV6ZH6AK-X6G2
+  • TS-SPIN-03-MV6ZH6AK-6T72
+  • TS-SPIN-03-MV6ZH6AK-KI91
+  • TS-SPIN-03-MV6ZH6AK-6PA3
+  • TS-SPIN-03-MV6ZH6AK-CJJK
+  • TS-SPIN-03-MV6ZH6AK-0XHJ
+  • TS-SPIN-03-MV6ZH6AK-1L1K
+
+[SKU: Topshot Lite Featherweight Control Racket - ₹2,799]
+  • TS-LITE-04-MV6ZH6AM-GPAZ
+  • TS-LITE-04-MV6ZH6AM-DBD9
+  • TS-LITE-04-MV6ZH6AM-Y0LM
+  • TS-LITE-04-MV6ZH6AM-XOAM
+  • TS-LITE-04-MV6ZH6AM-9F6X
+  • TS-LITE-04-MV6ZH6AM-WC3F
+  • TS-LITE-04-MV6ZH6AM-TIF3
+  • TS-LITE-04-MV6ZH6AM-EWSA
+
+
+--- B. UNUSED DELHIVERY WAYBILL NUMBERS (For Fresh Dispatches) ---
+  • DLHV-TEST-9001
+  • DLHV-TEST-9002
+  • DLHV-TEST-9003
+  • DLHV-TEST-9004
+  • DLHV-TEST-9005
+
+
+--- C. ACTIVE DISPATCHED/DELIVERED ORDERS (Ready for Return Testing) ---
+Use either Order ID or Delhivery Tracking ID in the "Worker: Process Return" tab:
+
+  1. Order ID:      ORD-2026-1001-RIIA
+     Delhivery ID:  DLHV-BOM-901-7000
+     Buyer:         Aarav Mehta (Worli, Mumbai)
+     Racket SKU:    SKU-TOP-FORCE-02
+
+  2. Order ID:      ORD-2026-1002-LSAO
+     Delhivery ID:  DLHV-PNQ-902-7001
+     Buyer:         Tanvi Kulkarni (Aundh, Pune)
+     Racket SKU:    SKU-TOP-AERO-01
+
+  3. Order ID:      ORD-2026-1003-ZTMU
+     Delhivery ID:  DLHV-DEL-903-7002
+     Buyer:         Rajesh Gupta (Gurugram)
+     Racket SKU:    SKU-TOP-SPIN-03
+
+  4. Order ID:      ORD-2026-1004-HNW1
+     Delhivery ID:  DLHV-MAA-904-7003
+     Buyer:         Pooja Menon (RA Puram, Chennai)
+     Racket SKU:    SKU-TOP-LITE-04
+
+  5. Order ID:      ORD-2026-1005-1PE2
+     Delhivery ID:  DLHV-BLR-905-7004
+     Buyer:         Priya Iyer (Indiranagar, Bengaluru)
+     Racket SKU:    SKU-TOP-FORCE-02
+
+  6. Order ID:      ORD-2026-1006-WD30
+     Delhivery ID:  DLHV-COK-906-7005
+     Buyer:         Arjun Nair (Kochi)
+     Racket SKU:    SKU-TOP-AERO-01
+
+
+--- D. ALREADY RETURNED ORDERS (For Double-Return Validation) ---
+  • Order ID: ORD-2026-1008-XE0S  |  Delhivery ID: DLHV-IXC-908-7007 (Aditya Sharma)
+  • Order ID: ORD-2026-1017-H40K  |  Delhivery ID: DLHV-DEL-917-7016 (Ritu Singhal)
+  • Order ID: ORD-2026-1019-JICL  |  Delhivery ID: DLHV-CCU-919-7018 (Diya Sengupta)
+  • Order ID: ORD-2026-1025-WZ0Q  |  Delhivery ID: DLHV-JAI-925-7024 (Aakash Tiwari)
+
+
+--- E. ALREADY SOLD BARCODES (For 1:1 Duplicate Dispatch Conflict Validation) ---
+  • TS-ORCE-02-SEED-001  (Already dispatched on ORD-2026-1001-RIIA)
+  • TS-AERO-01-SEED-002  (Already dispatched on ORD-2026-1002-LSAO)
+  • TS-SPIN-03-SEED-003  (Already dispatched on ORD-2026-1003-ZTMU)
+  • TS-LITE-04-SEED-004  (Already dispatched on ORD-2026-1004-HNW1)
+
+
+--- F. SECURITY PIN REFERENCE ---
+  • CEO / Admin Override PIN: 9876
+    (Used whenever discount exceeds standard 20% limit and for CEO portal authentication)
+
+================================================================================
+TEST SUITE 3: MULTI-RACKET DISPATCH (Tab: "Worker: Scan & Dispatch")
+================================================================================
+
+--- TEST CASE 3.1: Add Multiple Rackets to 1 Order ID ---
+Goal: Dispatch 2 or more physical rackets under a single Delhivery Order ID.
+Steps:
+  1. Open http://localhost:3000 (Sign in as Worker or CEO)
+  2. In "Step 1: Add Rackets to Order", enter the first barcode and click "Add Racket":
+       TS-AERO-01-MV6ZH6A0-U1VZ
+  3. Verify Racket #1 is added to the order list (Topshot Aero Carbon, ₹4,499).
+  4. Notice the badge updates to "1 Added".
+  5. In the same input, enter a second barcode and click "Add Racket":
+       TS-AERO-01-MV6ZH6A0-1Y2S
+  6. Verify Racket #2 appears in the order list.
+  7. Confirm the combined Preset Total updates to ₹8,998 (2 Rackets).
+  8. In "Step 2: Delhivery Tracking Number", enter:
+       DLHV-MULTI-WAYBILL-2001
+  9. Click "Fetch Details" to populate buyer information.
+  10. In "Step 3: Discount & Approval Rule", select 10% discount.
+  11. Click "Confirm & Dispatch Order (2 Rackets)".
+Expected Result:
+  - Green Success receipt displays: "Order Dispatched Successfully!"
+  - Dispatched summary shows 2 units, both barcodes listed, and final combined price.
+  - Both rackets are atomically marked as "Sold" in the database under that single Order ID.
+
+--- TEST CASE 3.2: Duplicate Barcode Prevention in Same Order ---
+Goal: Verify a worker cannot scan the same racket twice into the same order.
+Steps:
+  1. In "Step 1: Add Rackets to Order", add barcode:
+       TS-AERO-01-MV6ZH6A0-U1VZ
+  2. Attempt to add the exact same barcode again:
+       TS-AERO-01-MV6ZH6A0-U1VZ
+Expected Result:
+  - Red alert: "Racket 'TS-AERO-01-MV6ZH6A0-U1VZ' has already been added to this order."
+
+================================================================================
+TEST SUITE 4: AUTHENTICATION & ACCESS CONTROL (Worker vs CEO Mode)
+================================================================================
+
+--- TEST CASE 4.1: Worker Access Restrictions ---
+Goal: Verify that a Worker can only access dispatching and returns, and is blocked from CEO metrics.
+Steps:
+  1. Click Sign Out (or clear localStorage) and select "Enter as Warehouse Worker".
+  2. Notice the navbar displays: "Worker Station | Unlock CEO".
+  3. Notice the "CEO: Metrics & SKUs" tab has a lock badge: "PIN Required".
+  4. Click the "CEO: Metrics & SKUs" tab.
+Expected Result:
+  - CEO Authentication modal pops up: "CEO Authentication - Unlock executive metrics & controls".
+  - Worker is blocked from seeing gross revenue, net revenue, margins, SKU price editing, and ledger.
+  - Worker CAN freely use "Worker: Scan & Dispatch" and "Worker: Process Return / Refund".
+
+--- TEST CASE 4.2: CEO Full Access ---
+Goal: Verify that authenticating with CEO PIN gives full access to all features.
+Steps:
+  1. In the CEO Unlock modal (or on the Sign In page under Executive CEO Portal), enter:
+       9876
+  2. Click "Authenticate as CEO" or "Unlock CEO".
+Expected Result:
+  - Navbar updates to: "👑 CEO Mode (Full Access)".
+  - "CEO: Metrics & SKUs" tab opens immediately displaying:
+      * Executive metrics cards (Gross Revenue, Net Revenue, Shipping Cost, Units Sold, Return Rate)
+      * Weekly and Monthly revenue trend charts
+      * Live SKU inventory table with price editing
+      * Inbound Acquisition modal for batch generation
+      * Full orders history ledger with period filters and Excel/CSV exports.
+  - CEO also retains full access to "Worker: Scan & Dispatch" and "Worker: Process Return".
+================================================================================
